@@ -11,6 +11,8 @@
 #include <ESP8266WiFi.h>
 #include <PubSubClient.h>
 
+#define SENSORPIN A0
+
 WiFiClient espClient;
 PubSubClient mqtt(espClient);
 
@@ -36,6 +38,31 @@ char mqtt_password[64] = "MQTTPASS";
 char mqtt_topic[60] = {0};
 
 bool shouldSaveConfig = false;  // Flag for saving data
+
+void measure() {
+  int raw = analogRead(SENSORPIN);
+
+  float mVoltage3 = (3300 * (float) raw) / 1023;
+
+  float LM35_TEMPC = mVoltage3 / 10;
+
+  Serial.print("mVoltage = ");
+  Serial.print(mVoltage3);
+  Serial.print(" Temperature = ");
+  Serial.println(LM35_TEMPC);
+
+  DynamicJsonDocument json(1024);
+
+  json["voltage"] = mVoltage3;
+  json["raw"] = raw;
+  json["temp_celsius"] = LM35_TEMPC;
+
+  String output;
+  serializeJson(json, output);
+
+  Serial.println(output);
+  mqtt.publish(mqtt_topic, output.c_str());
+}
 
 void saveConfigCallback () {    // Callback notifying us of the need to save config
   Serial.println("Should save config");
@@ -196,10 +223,11 @@ void setup() {
 
 void loop() {
   // put your main code here, to run repeatedly:
-  digitalWrite(LED_BUILTIN, HIGH);   // turn the LED on (HIGH is the voltage level)
-  delay(1000);                       // wait for a second
-  digitalWrite(LED_BUILTIN, LOW);    // turn the LED off by making the voltage LOW
-  delay(10000);
+  digitalWrite(LED_BUILTIN, LOW);   // turn the LED on (HIGH is the voltage level)
+  delay(100);                       // wait for a second
+  digitalWrite(LED_BUILTIN, HIGH);    // turn the LED off by making the voltage LOW
+  delay(1000);
 
   mqtt.publish(mqtt_topic, "alive");
+  measure();
 }
