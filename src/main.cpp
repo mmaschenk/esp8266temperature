@@ -12,11 +12,14 @@
 #include <PubSubClient.h>
 
 #define SENSORPIN A0
+#define DONTSLEEPPIN D5
+#define DEFAULTSLEEPTIMEINSECONDS 300
 
 WiFiClient espClient;
 PubSubClient mqtt(espClient);
 
 #define CONFIGFILE  "/config.json"
+#define FORCECONFIGFILE "/reconfig.force"
 #define PRODUCT "Temperature sensor"
 
 WiFiServer server(80);
@@ -36,6 +39,10 @@ char mqtt_port[6] = "8080";
 char mqtt_user[32] = "MQTTUSER";
 char mqtt_password[64] = "MQTTPASS";
 char mqtt_topic[60] = {0};
+
+int sleeptime = DEFAULTSLEEPTIMEINSECONDS;
+
+char clientID[30];
 
 bool shouldSaveConfig = false;  // Flag for saving data
 
@@ -61,7 +68,9 @@ void measure() {
   serializeJson(json, output);
 
   Serial.println(output);
-  mqtt.publish(mqtt_topic, output.c_str());
+  int result = mqtt.publish(mqtt_topic, output.c_str());
+
+  Serial.printf("publish result: %d\n", result);
 }
 
 void saveConfigCallback () {    // Callback notifying us of the need to save config
@@ -140,13 +149,78 @@ void writeJSONConfig() {
   serializeJson(json, config);
 
   config.close();
+}
 
+void callback(char* topic, byte* payload, unsigned int length) {
+  Serial.print("Message arrived in topic: ");
+  Serial.println(topic);
 
+  Serial.print("Length: ");
+  Serial.println(length);
+
+  Serial.print("Message:");
+  for (unsigned int i = 0; i < length; i++) {
+    Serial.print((char)payload[i]);
+  }
+  Serial.println();
+
+  char buffer[length+1];
+  strncpy( buffer, (char *) payload, sizeof(buffer));
+  buffer[length] = '\0';
+  Serial.printf("Copied message to buffer: [%s]\n", buffer);
+
+  DynamicJsonDocument json(1024);
+  auto deserializeError = deserializeJson(json, buffer);
+
+  Serial.printf("Parsed json: %d\n", deserializeError);
+  if (!deserializeError) {
+    Serial.printf("Parsed json\n");
+
+    const char* operation = json["operation"] | "none";
+    const char* target = json["target"] | "none";
+    Serial.printf("Performing operation [%s] on target [%s]\n", operation, target); 
+
+    if (strcmp(target, clientID) ==0) {
+      Serial.println("Message is for me!");
+
+      if (strcmp(operation, "boottoconfig") == 0) {
+        File forceboot = LittleFS.open(FORCECONFIGFILE, "w");
+        forceboot.close();
+        Serial.println("Restarting");
+        ESP.restart();
+      }
+    }
+
+  }
+}
+
+void mqttConnect() {
+  String port = mqtt_port;
+
+  mqtt.setServer(mqtt_server, port.toInt());
+  mqtt.setCallback(callback);
+
+  while (!mqtt.connected()) {
+    Serial.print("Connecting to MQTT...");
+
+    if (mqtt.connect(clientID, mqtt_user, mqtt_password )) {
+      Serial.println("connected");
+    } else {
+      Serial.print("failed with state ");
+      Serial.println(mqtt.state());
+      delay(2000);
+    }
+  }
+  int pubbed = mqtt.publish(mqtt_topic, "connected");
+  Serial.printf("Connection message sent: %d\n", pubbed);
+  int subbed = mqtt.subscribe(mqtt_topic);
+  Serial.printf("Subscription result: %d\n", subbed);
 }
 
 void setup() {
   // put your setup code here, to run once:
   pinMode(LED_BUILTIN, OUTPUT);
+  pinMode(DONTSLEEPPIN, INPUT_PULLUP);
 
   Serial.begin(115200);
   Serial.println();
@@ -174,9 +248,10 @@ void setup() {
 
   wifiManager.setAPStaticIPConfig(IPAddress(10,0,1,1), IPAddress(10,0,1,1), IPAddress(255,255,255,0));
 
-  if (configdone) {
+  if (configdone && !LittleFS.exists(FORCECONFIGFILE)) {
     wifiManager.autoConnect(PRODUCT);
   } else {
+    LittleFS.remove(FORCECONFIGFILE);
     wifiManager.startConfigPortal(PRODUCT);
   }
   //WiFi.disconnect();
@@ -193,7 +268,7 @@ void setup() {
     writeJSONConfig();
   }
 
-  char clientID[30];
+  
   snprintf(clientID, 30, "ESP8266-%08X", ESP.getChipId());
 
   sprintf(mqtt_topic, "%s%s", "IOT/", PRODUCT);
@@ -203,22 +278,23 @@ void setup() {
   Serial.printf("\nAssigned ChipID:%s\n",clientID);
   Serial.printf("Address:%s:%ld\nU:%s\nP:%s\nTopic:%s\n\n", mqtt_server, port.toInt(), mqtt_user, mqtt_password, mqtt_topic);
     
-  mqtt.setServer(mqtt_server, port.toInt());
-  //client.setCallback(callback);
-
+  
+  mqttConnect();
+  /*
   while (!mqtt.connected()) {
-      Serial.print("Connecting to MQTT...");
+    Serial.print("Connecting to MQTT...");
 
-      if (mqtt.connect(clientID, mqtt_user, mqtt_password )) {
-        Serial.println("connected");
-      } else {
-        Serial.print("failed with state ");
-        Serial.println(mqtt.state());
-        delay(2000);
-      }
+    if (mqtt.connect(clientID, mqtt_user, mqtt_password )) {
+      Serial.println("connected");
+    } else {
+      Serial.print("failed with state ");
+      Serial.println(mqtt.state());
+      delay(2000);
     }
-    mqtt.publish(mqtt_topic, "connected"); //Topic name
-    mqtt.subscribe(mqtt_topic);
+  }
+  mqtt.publish(mqtt_topic, "connected"); //Topic name
+    //mqtt.subscribe(mqtt_topic);
+  */
 }
 
 void loop() {
@@ -230,4 +306,30 @@ void loop() {
 
   mqtt.publish(mqtt_topic, "alive");
   measure();
+  delay(2000);
+
+  int cansleep = digitalRead(DONTSLEEPPIN);
+
+  Serial.print("cansleep = ");
+  Serial.println(cansleep);
+
+  mqtt.loop();
+
+  if (cansleep) {
+    Serial.println("Sleeping");
+    ESP.deepSleep(sleeptime * 1000000);
+  } else {
+    for (int i =0; i <sleeptime; i++) {
+      mqtt.loop();
+      delay(1000);
+    }
+  }
+
+  if (!mqtt.connected()) {
+    mqttConnect();
+  }
+
+  mqtt.loop();
+
+  
 }
