@@ -93,18 +93,13 @@ void showDir() {
 
 int populatejsondocument(JsonDocument &json) {
   if (LittleFS.exists(CONFIGFILE)) {
-    Serial.println("reading config file");
-
     File config = LittleFS.open(CONFIGFILE, "r");
 
     if (config) {
-      Serial.println("opened config file");
-
       size_t size = config.size();
       config.readBytes(jsonbuf, size);
 
       auto deserializeError = deserializeJson(json, jsonbuf);
-      serializeJson(json, Serial);
       config.close();
       if (!deserializeError) {
         return 0;
@@ -159,9 +154,8 @@ int readJSONConfig() {
 void dumpconfig() {
   DynamicJsonDocument json(1024);
 
-  Serial.println("Populating");
   int readstatus = populatejsondocument(json);
-  Serial.printf("\nPopulated with result code %d\n", readstatus);
+  Serial.printf("Populated with result code %d\n", readstatus);
   serializeJsonPretty(json, Serial);
   Serial.println();
 }
@@ -196,36 +190,27 @@ void writeJSONConfig() {
 }
 
 void callback(char* topic, byte* payload, unsigned int length) {
-  Serial.print("Message arrived in topic: ");
-  Serial.println(topic);
+  Serial.printf("================ Message arrived in topic: %s ================\n", topic);
 
   Serial.print("Length: ");
   Serial.println(length);
 
-  Serial.print("Message:");
-  for (unsigned int i = 0; i < length; i++) {
-    Serial.print((char)payload[i]);
-  }
-  Serial.println();
-
   char buffer[length+1];
   strncpy( buffer, (char *) payload, sizeof(buffer));
   buffer[length] = '\0';
-  Serial.printf("Copied message to buffer: [%s]\n", buffer);
+  Serial.printf("message to buffer: [%s]\n", buffer);
 
   DynamicJsonDocument json(1024);
   auto deserializeError = deserializeJson(json, buffer);
 
   Serial.printf("Parsed json: %d\n", deserializeError);
   if (!deserializeError) {
-    Serial.printf("Parsed json\n");
-
     const char* operation = json["operation"] | "none";
     const char* target = json["target"] | "none";
-    Serial.printf("Performing operation [%s] on target [%s]\n", operation, target); 
+    Serial.printf("operation: [%s] target: [%s]\n", operation, target); 
 
     if (strcmp(target, clientID) ==0) {
-      Serial.println("Message is for me!");
+      Serial.println("Processing message (target == me)");
 
       if (strcmp(operation, "boottoconfig") == 0) {
         File forceboot = LittleFS.open(FORCECONFIGFILE, "w");
