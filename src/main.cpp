@@ -54,6 +54,8 @@ int sleeptime = DEFAULTSLEEPTIMEINSECONDS;
 char clientID[30];
 
 char onewireid[30];
+char LM55ID[42];
+
 bool shouldSaveConfig = false;  // Flag for saving data
 
 char jsonbuf[MAXCONFIGFILESIZE];
@@ -71,10 +73,27 @@ void measureLM35() {
   Serial.println(LM35_TEMPC);
 
   DynamicJsonDocument json(1024);
+  JsonArray array = json.to<JsonArray>();
+  JsonObject entry = array.createNestedObject();
 
-  json["voltage"] = mVoltage3;
-  json["raw"] = raw;
-  json["temp_celsius"] = LM35_TEMPC;
+  entry["bn"] = LM55ID;
+
+  entry = array.createNestedObject();
+  entry["n"] = "voltage";
+  entry["v"] = mVoltage3;
+  entry["u"] = "milliVolt";
+  entry["t"] = 0;
+
+  entry = array.createNestedObject();
+  entry["n"] = "raw";
+  entry["v"] = raw;
+  entry["t"] = 0;
+
+  entry = array.createNestedObject();
+  entry["n"] = "temp_celsius";
+  entry["v"] = LM35_TEMPC;
+  entry["u"] = "Cel";
+  entry["t"] = 0;
 
   String output;
   serializeJson(json, output);
@@ -361,6 +380,7 @@ void setup() {
   }
 
   snprintf(clientID, 30, "ESP8266-%08X", ESP.getChipId());
+  snprintf(LM55ID, 41, "urn:dev:ow:%s", clientID);
   //sprintf(mqtt_topic, "%s%s", "IOT/", PRODUCT);
 
   String port = mqtt_port;
