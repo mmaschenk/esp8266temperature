@@ -11,12 +11,20 @@
 #include <ESP8266WiFi.h>
 #include <PubSubClient.h>
 
+#include <OneWire.h>
+#include <DallasTemperature.h>
+
 #define SENSORPIN A0
 #define DONTSLEEPPIN D5
 #define DEFAULTSLEEPTIMEINSECONDS 300
 
+#define DALLASPIN D6
+
 WiFiClient espClient;
 PubSubClient mqtt(espClient);
+
+OneWire oneWire(DALLASPIN);
+DallasTemperature sensors(&oneWire);
 
 #define CONFIGFILE  "/config.json"
 #define FORCECONFIGFILE "/reconfig.force"
@@ -40,14 +48,17 @@ char mqtt_user[32] = "MQTTUSER";
 char mqtt_password[64] = "MQTTPASS";
 char mqtt_topic[60] = {0};
 
+
 int sleeptime = DEFAULTSLEEPTIMEINSECONDS;
 
 char clientID[30];
+
+char onewireid[30];
 bool shouldSaveConfig = false;  // Flag for saving data
 
 char jsonbuf[MAXCONFIGFILESIZE];
 
-void measure() {
+void measureLM35() {
   int raw = analogRead(SENSORPIN);
 
   float mVoltage3 = (3300 * (float) raw) / 1023;
@@ -71,7 +82,32 @@ void measure() {
   Serial.println(output);
   int result = mqtt.publish(mqtt_topic, output.c_str());
 
-  Serial.printf("publish result: %d\n", result);
+  Serial.printf("publish LM35 result: %d\n", result);
+}
+
+void measureDS18B20() {
+  sensors.requestTemperatures();
+  float tC = sensors.getTempCByIndex(0);
+
+  Serial.printf("DS18B20 sensor reading: %f\n", tC);
+
+  DynamicJsonDocument json(1024);
+  JsonArray array = json.to<JsonArray>();
+  JsonObject entry = array.createNestedObject();
+
+  entry["v"] = tC;
+  entry["u"] = "Cel";
+  entry["n"] = "temperature";
+  entry["bn"] = onewireid;
+  entry["t"] = 0;
+
+  String output;
+  serializeJson(json, output);
+
+  Serial.println(output);
+  int result = mqtt.publish(mqtt_topic, output.c_str());
+
+  Serial.printf("publish DS18B20 result: %d\n", result);
 }
 
 void saveConfigCallback () {    // Callback notifying us of the need to save config
@@ -254,6 +290,22 @@ void mqttConnect() {
   Serial.printf("Subscription result: %d\n", subbed);
 }
 
+void addresssearch() {
+  // Assumes there is only 1 onewire device attached!!
+  DeviceAddress deviceAddress;
+  oneWire.reset_search();
+
+  while (oneWire.search(deviceAddress)) {
+    for (int i =0; i < sizeof(deviceAddress); i++) {
+      Serial.printf("Adress: %d %02x\n", deviceAddress[i], deviceAddress[i]);
+    }
+  }
+  snprintf(onewireid, 28, "urn:dev:ow:%0x%0x%0x%0x%0x%0x%0x%0x:",
+    deviceAddress[0], deviceAddress[1], deviceAddress[2], deviceAddress[3],
+    deviceAddress[4], deviceAddress[5], deviceAddress[6], deviceAddress[7]);
+  Serial.printf("ID = [%s]. Next\n", onewireid);
+}
+
 void setup() {
   // put your setup code here, to run once:
   pinMode(LED_BUILTIN, OUTPUT);
@@ -308,7 +360,6 @@ void setup() {
     writeJSONConfig();
   }
 
-  
   snprintf(clientID, 30, "ESP8266-%08X", ESP.getChipId());
   //sprintf(mqtt_topic, "%s%s", "IOT/", PRODUCT);
 
@@ -318,6 +369,11 @@ void setup() {
   Serial.printf("Address:%s:%ld\nU:%s\nP:%s\nTopic:%s\n\n", mqtt_server, port.toInt(), mqtt_user, mqtt_password, mqtt_topic);
 
   mqttConnect();
+
+  addresssearch();
+
+  sensors.begin();
+  
 }
 
 void loop() {
@@ -327,7 +383,8 @@ void loop() {
   delay(1000);
 
   mqtt.publish(mqtt_topic, "alive");
-  measure();
+  measureLM35();
+  measureDS18B20();
   delay(2000);
 
   int cansleep = digitalRead(DONTSLEEPPIN);
@@ -336,6 +393,8 @@ void loop() {
   Serial.println(cansleep);
 
   mqtt.loop();
+
+  
 
   if (cansleep) {
     Serial.printf("Deep sleeping for %d seconds\n", sleeptime);
