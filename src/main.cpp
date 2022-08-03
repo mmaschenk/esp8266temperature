@@ -14,11 +14,9 @@
 #include <OneWire.h>
 #include <DallasTemperature.h>
 
-#define SENSORPIN A0
-#define DONTSLEEPPIN D5
-#define DEFAULTSLEEPTIMEINSECONDS 300
+#include "main.h"
 
-#define DALLASPIN D6
+
 
 WiFiClient espClient;
 PubSubClient mqtt(espClient);
@@ -53,8 +51,8 @@ int sleeptime = DEFAULTSLEEPTIMEINSECONDS;
 
 char clientID[30];
 
-char onewireid[30];
-char LM55ID[42];
+char onewireid[36];
+char LM55ID[51];
 
 bool shouldSaveConfig = false;  // Flag for saving data
 
@@ -90,7 +88,7 @@ void measureLM35() {
   entry["t"] = 0;
 
   entry = array.createNestedObject();
-  entry["n"] = "temp_celsius";
+  entry["n"] = "temperature";
   entry["v"] = LM35_TEMPC;
   entry["u"] = "Cel";
   entry["t"] = 0;
@@ -258,7 +256,7 @@ void callback(char* topic, byte* payload, unsigned int length) {
   DynamicJsonDocument json(1024);
   auto deserializeError = deserializeJson(json, buffer);
 
-  Serial.printf("Parsed json: %d\n", deserializeError);
+  Serial.printf("Parsed json: %d\n", deserializeError.code());
   if (!deserializeError) {
     const char* operation = json["operation"] | "none";
     const char* target = json["target"] | "none";
@@ -315,11 +313,11 @@ void addresssearch() {
   oneWire.reset_search();
 
   while (oneWire.search(deviceAddress)) {
-    for (int i =0; i < sizeof(deviceAddress); i++) {
+    for (unsigned int i =0; i < sizeof(deviceAddress); i++) {
       Serial.printf("Adress: %d %02x\n", deviceAddress[i], deviceAddress[i]);
     }
   }
-  snprintf(onewireid, 28, "urn:dev:ow:%0x%0x%0x%0x%0x%0x%0x%0x:",
+  snprintf(onewireid, 29, "urn:dev:ow:%0x%0x%0x%0x%0x%0x%0x%0x:",
     deviceAddress[0], deviceAddress[1], deviceAddress[2], deviceAddress[3],
     deviceAddress[4], deviceAddress[5], deviceAddress[6], deviceAddress[7]);
   Serial.printf("ID = [%s]. Next\n", onewireid);
@@ -380,7 +378,7 @@ void setup() {
   }
 
   snprintf(clientID, 30, "ESP8266-%08X", ESP.getChipId());
-  snprintf(LM55ID, 41, "urn:dev:ow:%s", clientID);
+  snprintf(LM55ID, 50, "urn:mydevices:lm35:%s:", clientID);
   //sprintf(mqtt_topic, "%s%s", "IOT/", PRODUCT);
 
   String port = mqtt_port;
