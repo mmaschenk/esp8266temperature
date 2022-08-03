@@ -11,18 +11,20 @@
 #include <ESP8266WiFi.h>
 #include <PubSubClient.h>
 
-#include <OneWire.h>
-#include <DallasTemperature.h>
-
 #include "main.h"
 
-
+#if D18B20PRESENT == 1
+  #include <OneWire.h>
+  #include <DallasTemperature.h>
+#endif
 
 WiFiClient espClient;
 PubSubClient mqtt(espClient);
 
+#if D18B20PRESENT == 1
 OneWire oneWire(DALLASPIN);
 DallasTemperature sensors(&oneWire);
+#endif
 
 #define CONFIGFILE  "/config.json"
 #define FORCECONFIGFILE "/reconfig.force"
@@ -41,8 +43,15 @@ int sleeptime = DEFAULTSLEEPTIMEINSECONDS;
 
 char clientID[30];
 
-char onewireid[36];
+#if LM35PRESENT == 1
 char LM55ID[51];
+#endif
+
+#if D18B20PRESENT == 1
+char onewireid[36];
+#endif
+
+
 
 bool shouldSaveConfig = false;  // Flag for saving data
 
@@ -51,8 +60,7 @@ char jsonbuf[MAXCONFIGFILESIZE];
 #if LM35PRESENT == 1
 void measureLM35() {
 
-  int raw = analogRead(SENSORPIN);
-
+  int raw = analogRead(LM35SENSORPIN);
   float mVoltage3 = (3300 * (float) raw) / 1023;
   float LM35_TEMPC = mVoltage3 / 10;
   Serial.print("mVoltage = ");
@@ -93,6 +101,7 @@ void measureLM35() {
 }
 #endif
 
+#if D18B20PRESENT == 1
 void measureDS18B20() {
   sensors.requestTemperatures();
   float tC = sensors.getTempCByIndex(0);
@@ -117,6 +126,7 @@ void measureDS18B20() {
 
   Serial.printf("publish DS18B20 result: %d\n", result);
 }
+#endif
 
 void saveConfigCallback () {    // Callback notifying us of the need to save config
   Serial.println("Should save config");
@@ -275,6 +285,16 @@ void callback(char* topic, byte* payload, unsigned int length) {
   }
 }
 
+int sendStatus(const char *status) {
+  DynamicJsonDocument json(1024);
+  json["type"] = "status";
+  json["value"] = status;
+  String output;
+  serializeJson(json, output);
+  Serial.println(output);
+  return mqtt.publish(mqtt_topic, output.c_str());
+}
+
 void mqttConnect() {
   String port = mqtt_port;
 
@@ -292,12 +312,13 @@ void mqttConnect() {
       delay(2000);
     }
   }
-  int pubbed = mqtt.publish(mqtt_topic, "connected");
+  int pubbed = sendStatus("connected");
   Serial.printf("Connection message sent: %d\n", pubbed);
   int subbed = mqtt.subscribe(mqtt_topic);
   Serial.printf("Subscription result: %d\n", subbed);
 }
 
+#if D18B20PRESENT == 1
 void addresssearch() {
   // Assumes there is only 1 onewire device attached!!
   DeviceAddress deviceAddress;
@@ -313,6 +334,7 @@ void addresssearch() {
     deviceAddress[4], deviceAddress[5], deviceAddress[6], deviceAddress[7]);
   Serial.printf("ID = [%s]. Next\n", onewireid);
 }
+#endif
 
 void setup() {
   // put your setup code here, to run once:
@@ -369,19 +391,21 @@ void setup() {
   }
 
   snprintf(clientID, 30, "ESP8266-%08X", ESP.getChipId());
+
+  #if LM35PRESENT == 1
   snprintf(LM55ID, 50, "urn:mydevices:lm35:%s:", clientID);
-  //sprintf(mqtt_topic, "%s%s", "IOT/", PRODUCT);
+  #endif
 
   String port = mqtt_port;
-
   Serial.printf("\nAssigned ChipID:%s\n",clientID);
   Serial.printf("Address:%s:%ld\nU:%s\nP:%s\nTopic:%s\n\n", mqtt_server, port.toInt(), mqtt_user, mqtt_password, mqtt_topic);
 
   mqttConnect();
 
+  #if D18B20PRESENT == 1
   addresssearch();
-
   sensors.begin();
+  #endif
   
 }
 
@@ -391,29 +415,33 @@ void loop() {
   digitalWrite(LED_BUILTIN, HIGH);    // turn the LED off by making the voltage LOW
   delay(1000);
 
-  mqtt.publish(mqtt_topic, "alive");
+  sendStatus("alive");
 
   #if LM35PRESENT == 1
   measureLM35();
   #endif
-  
+
+  #if D18B20PRESENT == 1
   measureDS18B20();
-  delay(2000);
+  #endif
 
   int cansleep = digitalRead(DONTSLEEPPIN);
 
-  Serial.print("cansleep = ");
-  Serial.println(cansleep);
-
+  char statusmessage[100];
+  if (cansleep) {
+    sprintf(statusmessage, "going in to deep sleep for %d seconds", sleeptime);  
+  } else {
+    sprintf(statusmessage, "going into delay loop for %d seconds\n", sleeptime);
+  }
+  sendStatus(statusmessage);
+  
   mqtt.loop();
 
-  
-
   if (cansleep) {
-    Serial.printf("Deep sleeping for %d seconds\n", sleeptime);
+    delay(2000);
+    mqtt.loop();
     ESP.deepSleep(sleeptime * 1000000);
   } else {
-    Serial.printf("Delaying for %d seconds\n", sleeptime);
     for (int i =0; i <sleeptime; i++) {
       mqtt.loop();
       delay(1000);
@@ -425,6 +453,4 @@ void loop() {
   }
 
   mqtt.loop();
-
-  
 }
