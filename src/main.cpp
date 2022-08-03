@@ -31,21 +31,11 @@ DallasTemperature sensors(&oneWire);
 #define MAXCONFIGFILESIZE 2048
 WiFiServer server(80);
 
-String header;
-// Auxiliar variables to store the current output state
-String output5State = "off";
-String output4State = "off";
-
-// Assign output variables to GPIO pins
-const int output5 = 5;
-const int output4 = 4;
-
 char mqtt_server[40];
 char mqtt_port[6] = "8080";
 char mqtt_user[32] = "MQTTUSER";
 char mqtt_password[64] = "MQTTPASS";
 char mqtt_topic[60] = {0};
-
 
 int sleeptime = DEFAULTSLEEPTIMEINSECONDS;
 
@@ -58,13 +48,13 @@ bool shouldSaveConfig = false;  // Flag for saving data
 
 char jsonbuf[MAXCONFIGFILESIZE];
 
+#if LM35PRESENT == 1
 void measureLM35() {
+
   int raw = analogRead(SENSORPIN);
 
   float mVoltage3 = (3300 * (float) raw) / 1023;
-
   float LM35_TEMPC = mVoltage3 / 10;
-
   Serial.print("mVoltage = ");
   Serial.print(mVoltage3);
   Serial.print(" Temperature = ");
@@ -101,6 +91,7 @@ void measureLM35() {
 
   Serial.printf("publish LM35 result: %d\n", result);
 }
+#endif
 
 void measureDS18B20() {
   sensors.requestTemperatures();
@@ -401,7 +392,11 @@ void loop() {
   delay(1000);
 
   mqtt.publish(mqtt_topic, "alive");
+
+  #if LM35PRESENT == 1
   measureLM35();
+  #endif
+  
   measureDS18B20();
   delay(2000);
 
