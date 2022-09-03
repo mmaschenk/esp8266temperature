@@ -47,11 +47,13 @@ char clientID[30];
 char LM55ID[51];
 #endif
 
+#if BATTERYMEASURE == 1
+char batteryID[46];
+#endif
+
 #if D18B20PRESENT == 1
 char onewireid[36];
 #endif
-
-
 
 bool shouldSaveConfig = false;  // Flag for saving data
 
@@ -100,6 +102,45 @@ void measureLM35() {
   Serial.printf("publish LM35 result: %d\n", result);
 }
 #endif
+
+#if BATTERYMEASURE == 1
+void measureBattery() {
+  int raw = analogRead(BATTERYMEASUREPIN);
+
+  // Assume equal resistors in voltage divisor, so voltage is halved of real value
+
+  float voltage = 2.0 * 3.3 * raw / 1023;
+  Serial.print("voltage = ");
+  Serial.print(voltage);
+
+  DynamicJsonDocument json(1024);
+  JsonArray array = json.to<JsonArray>();
+  JsonObject entry = array.createNestedObject();
+
+  entry["bn"] = batteryID;
+
+  entry = array.createNestedObject();
+  entry["n"] = "battery";
+  entry["v"] = voltage;
+  entry["u"] = "volt";
+  entry["t"] = 0;
+
+  entry = array.createNestedObject();
+  entry["n"] = "rawbattery";
+  entry["v"] = raw;
+  entry["t"] = 0;
+
+  String output;
+  serializeJson(json, output);
+
+  Serial.println(output);
+  int result = mqtt.publish(mqtt_topic, output.c_str());
+
+  Serial.printf("publish battery result: %d\n", result);
+}
+
+#endif
+
 
 #if D18B20PRESENT == 1
 void measureDS18B20() {
@@ -396,6 +437,10 @@ void setup() {
   snprintf(LM55ID, 50, "urn:mydevices:lm35:%s:", clientID);
   #endif
 
+  #if BATTERYMEASURE == 1
+  snprintf(batteryID, 45, "urn:mydevices:%s:", clientID);
+  #endif
+
   String port = mqtt_port;
   Serial.printf("\nAssigned ChipID:%s\n",clientID);
   Serial.printf("Address:%s:%ld\nU:%s\nP:%s\nTopic:%s\n\n", mqtt_server, port.toInt(), mqtt_user, mqtt_password, mqtt_topic);
@@ -425,11 +470,15 @@ void loop() {
   measureDS18B20();
   #endif
 
+  #if BATTERYMEASURE == 1
+  measureBattery();
+  #endif
+
   int cansleep = digitalRead(DONTSLEEPPIN);
 
   char statusmessage[100];
   if (cansleep) {
-    sprintf(statusmessage, "going in to deep sleep for %d seconds", sleeptime);  
+    sprintf(statusmessage, "going into deep sleep for %d seconds", sleeptime);  
   } else {
     sprintf(statusmessage, "going into delay loop for %d seconds\n", sleeptime);
   }
